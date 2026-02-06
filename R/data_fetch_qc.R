@@ -1,3 +1,4 @@
+```
 #' Fetch Quebec National Assembly Debate Data
 #'
 #' Retrieves debate data from the CLESSN infrastructure via the tube package.
@@ -9,19 +10,19 @@
 #'
 #' @return A list with two elements:
 #'   \item{corpus}{Tibble of debate interventions with columns including
-#'     \code{speaker} and \code{event_date}.}
+#'     `speaker` and `event_date`.}
 #'   \item{members}{Tibble of assembly member records with columns including
-#'     \code{full_name}, \code{party_id}, \code{gender}, \code{legislature_id}.}
+#'     `full_name`, `party_id`, `gender`, `legislature_id`.}
 #'
 #' @details
 #' This function seamlessly combines:
 #' \itemize{
-#'   \item Recent debates (2016-09-20+) from the Datawarehouse table \code{a-qc-parliament-debates}.
-#'   \item Vintage debates (1908-2016) from the Datalake table \code{a-qc-parliament-debates-vintage}.
+#'   \item Recent debates (2016-09-20+) from the Datawarehouse table `a-qc-parliament-debates`.
+#'   \item Vintage debates (1908-2016) from the Datalake table `a-qc-parliament-debates-vintage`.
 #'   \item Current member records from the Datawarehouse.
 #'   \item Historical member records from an internal dataset.
 #' }
-#' Requires the \code{tube} package to be installed and configured.
+#' Requires the `tube` package to be installed and configured.
 #'
 #' @examples
 #' \dontrun{
@@ -158,7 +159,7 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
   # Fetch current members from Warehouse (usually only current Leg)
   conn_dev <- tube::ellipse_connect("DEV", "datawarehouse")
   members_wh <- tube::ellipse_query(conn_dev, "dim-qc-parliament-members") |>
-    dplyr::collect() |>
+    dplyr::collect() |> 
     tibble::as_tibble() |>
     dplyr::mutate(legislature_id = as.character(stringr::str_extract(legislature_id, "\\d+")))
 
@@ -185,3 +186,4 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
 
   list(corpus = corpus, members = members)
 }
+```
