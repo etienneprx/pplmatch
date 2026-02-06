@@ -144,14 +144,8 @@ def match_speaker(speaker_norm, lookup, fuzzy_threshold=85):
                 return _make_result(candidates[0], "deterministic", 100.0)
             else:
                 # Ambiguous: multiple members share this last name
-                return {
-                    "matched_name": None,
-                    "party_id": None,
-                    "gender": None,
-                    "district_id": None,
-                    "match_level": "ambiguous",
-                    "match_score": None,
-                }
+                # Attempt Consensus Matching
+                return _make_ambiguous_result(candidates, match_score=100.0)
 
     # --- Level 2: Fuzzy ---
     best_score = 0.0
@@ -179,18 +173,12 @@ def match_speaker(speaker_norm, lookup, fuzzy_threshold=85):
                 s = _fuzzy_score_last(speaker_norm, member["last_name_norm"])
                 if s >= fuzzy_threshold:
                     close_matches.append(member)
-            if len(close_matches) > 1:
-                # Check if they are actually different people
-                unique_names = set(m["full_name"] for m in close_matches)
-                if len(unique_names) > 1:
-                    return {
-                        "matched_name": None,
-                        "party_id": None,
-                        "gender": None,
-                        "district_id": None,
-                        "match_level": "ambiguous",
-                        "match_score": best_score,
-                    }
+            
+            # Filter close matches to those with unique full names (avoid dupes)
+            unique_matches = {m["full_name"]: m for m in close_matches}.values()
+            
+            if len(unique_matches) > 1:
+                return _make_ambiguous_result(list(unique_matches), best_score)
 
         return _make_result(best_info, "fuzzy", best_score)
 
@@ -205,6 +193,33 @@ def _make_result(info, match_level, match_score):
         "gender": info["gender"],
         "district_id": info["district_id"],
         "match_level": match_level,
+        "match_score": match_score,
+    }
+
+
+def _make_ambiguous_result(candidates, match_score):
+    """Build a result from multiple candidates using consensus logic.
+    
+    If all candidates share the same party or gender, return it.
+    matched_name will be a semicolon-separated list of candidates.
+    """
+    parties = set(c.get("party_id") for c in candidates if c.get("party_id"))
+    genders = set(c.get("gender") for c in candidates if c.get("gender"))
+    
+    consensus_party = parties.pop() if len(parties) == 1 else None
+    consensus_gender = genders.pop() if len(genders) == 1 else None
+    
+    # Create a composite name field so user knows who is involved
+    # e.g. "Mathieu Lévesque; Sylvain Lévesque"
+    names = sorted([c["full_name"] for c in candidates])
+    composite_name = "; ".join(names)
+
+    return {
+        "matched_name": composite_name, # Return all potential names
+        "party_id": consensus_party,    # Return party if consensus, else None
+        "gender": consensus_gender,     # Return gender if consensus, else None
+        "district_id": None,            # District is rarely shared, safe to null
+        "match_level": "ambiguous",
         "match_score": match_score,
     }
 
