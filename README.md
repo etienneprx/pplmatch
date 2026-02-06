@@ -4,7 +4,7 @@
 
 Ce package R permet d'identifier automatiquement qui parle dans les débats de l'Assemblée nationale du Québec (et du Canada). Il transforme des noms incomplets comme *"M. le Ministre"* ou *"M. Legault"* en données précises : **François Legault**, **CAQ**, **Premier Ministre**.
 
-Il est conçu pour être utilisé facilement par les étudiants et chercheurs de la CLESSN.
+Il est conçu pour être utilisé facilement par les étudiants et chercheurs du CAPP.
 
 ---
 
