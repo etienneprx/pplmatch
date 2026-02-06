@@ -8,7 +8,10 @@ ROLES = {
     "le president", "la presidente",
     "le vice-president", "la vice-presidente",
     "le president suppleant", "la presidente suppleante",
-    "une voix",
+    "une voix", "des voix",
+    "le secretaire", "la secretaire", "le secretaire adjoint", "la secretaire adjointe",
+    "le greffier", "la greffiere",
+    "mise aux voix", "motion", "ordre du jour",
 }
 
 # Patterns that match role-like speakers
@@ -17,6 +20,10 @@ ROLE_PREFIXES = (
     "la presidente",
     "le vice-president",
     "la vice-presidente",
+    "le secretaire",
+    "la secretaire",
+    "le greffier",
+    "la greffiere",
 )
 
 # Crowds / collective voices
@@ -36,11 +43,11 @@ HONORIFIC_GLUED_RE = re.compile(
 LEADING_NUMS_RE = re.compile(r"^[\d\s]+")
 
 # Trailing district after comma (e.g. ", Chauveau")
-TRAILING_DISTRICT_RE = re.compile(r",\s*[A-ZÀ-ÖØ-Ý].*$", re.IGNORECASE)
+TRAILING_DISTRICT_RE = re.compile(r",\s*([A-ZÀ-ÖØ-Ý][^(\-]*)$", re.IGNORECASE)
 
-# Trailing action keywords in parentheses or after dash
+# Trailing action keywords (e.g. "Legault (réplique)" or "Legault réplique")
 TRAILING_ACTION_RE = re.compile(
-    r"\s*[\(\-–—]\s*"
+    r"\s*([\(\-–—]\s*)?"
     r"(réplique|suite|en remplacement|par intérim|suppléant|suppléante)"
     r"[\)\s]*$",
     re.IGNORECASE,
@@ -49,6 +56,8 @@ TRAILING_ACTION_RE = re.compile(
 
 def strip_accents(text):
     """Remove diacritics from text using NFD decomposition."""
+    if not text:
+        return ""
     nfkd = unicodedata.normalize("NFD", text)
     return "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
 
@@ -58,23 +67,31 @@ def classify_speaker(raw_speaker):
 
     Returns one of: 'person', 'role', 'crowd', 'empty'.
     """
-    if not raw_speaker or not raw_speaker.strip():
+    if not raw_speaker or not str(raw_speaker).strip():
         return "empty"
 
-    cleaned = raw_speaker.strip()
+    cleaned = str(raw_speaker).strip()
+    # Remove leading numbers first for classification (e.g. "12 187 La Présidente")
+    cleaned = LEADING_NUMS_RE.sub("", cleaned).strip()
+    
     lower = cleaned.lower()
+    lower_no_accent = strip_accents(lower)
 
     # Check exact crowd matches
-    if strip_accents(lower).strip() in {"des voix"}:
+    if lower_no_accent in CROWDS:
         return "crowd"
 
     # Check role patterns
-    lower_no_accent = strip_accents(lower)
     if lower_no_accent in ROLES:
         return "role"
+    
     for prefix in ROLE_PREFIXES:
         if lower_no_accent.startswith(prefix):
             return "role"
+
+    # Keywords that indicate procedure rather than a person speaking
+    if any(keyword in lower_no_accent for keyword in ["mise aux voix", "motion", "grief"]):
+        return "role"
 
     return "person"
 
@@ -82,48 +99,51 @@ def classify_speaker(raw_speaker):
 def normalize_speaker(raw_speaker):
     """Normalize a speaker name for matching.
 
-    Returns a tuple: (category, normalized_name)
+    Returns a tuple: (category, normalized_name, extracted_district)
     - category: 'person', 'role', 'crowd', or 'empty'
-    - normalized_name: cleaned name string (empty for non-person categories)
+    - normalized_name: cleaned name string
+    - extracted_district: cleaned district name (or None)
     """
     category = classify_speaker(raw_speaker)
     if category != "person":
-        return category, ""
+        return category, "", None
 
-    name = raw_speaker.strip()
+    name = str(raw_speaker).strip()
 
-    # Remove leading numeric garbage
+    # 1. Extract district before stripping leading numbers (sometimes numbers are page refs)
+    district = None
+    district_match = TRAILING_DISTRICT_RE.search(name)
+    if district_match:
+        district_raw = district_match.group(1)
+        district = normalize_member_name(district_raw) # Use same norm as members
+        name = TRAILING_DISTRICT_RE.sub("", name).strip()
+
+    # 2. Remove leading numeric garbage
     name = LEADING_NUMS_RE.sub("", name).strip()
 
-    # Remove trailing action keywords
+    # 3. Remove trailing action keywords
     name = TRAILING_ACTION_RE.sub("", name).strip()
 
-    # Remove trailing district
-    name = TRAILING_DISTRICT_RE.sub("", name).strip()
-
-    # Handle glued honorific (M.Caire -> Caire)
+    # 4. Handle glued honorific (M.Caire -> Caire)
     name = HONORIFIC_GLUED_RE.sub(r"\2", name)
 
-    # Remove honorific prefix
+    # 5. Remove honorific prefix
     name = HONORIFICS_RE.sub("", name).strip()
 
-    # Lowercase
+    # 6. Final cleanup
     name = name.lower()
-
-    # Remove accents
     name = strip_accents(name)
-
-    # Keep only alpha and spaces
     name = re.sub(r"[^a-z ]", "", name)
-
-    # Collapse multiple spaces
     name = re.sub(r"\s+", " ", name).strip()
 
-    return "person", name
+    return "person", name, district
 
 
 def normalize_member_name(name):
     """Normalize a member name from the reference dataset for matching."""
+    if not name:
+        return ""
+    name = str(name)
     # Handle "Lastname, Firstname" format (common in CLESSN data)
     if "," in name:
         parts = name.split(",", 1)
