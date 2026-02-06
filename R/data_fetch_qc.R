@@ -53,12 +53,22 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
     # Adjust query range to not go below pivot if user asks for older
     start_wh <- max(date_from, PIVOT_DATE)
     
-    # Check if table exists (sanity check)
     tryCatch({
+      # Optimization: Select useful columns, exclude heavy technical metadata
       q_wh <- tube::ellipse_query(conn_wh, "a-qc-parliament-debates") |>
         dplyr::filter(
           event_date >= as.character(start_wh),
           event_date <= as.character(date_to)
+        ) |>
+        dplyr::select(
+          event_date,
+          intervention_seqnum,
+          speaker = speaker_full_name,
+          text = intervention_text,
+          event_title,
+          subject_of_business_title,
+          subject_of_business_subtitle,
+          intervention_lang
         )
       
       df_wh <- q_wh |> 
@@ -70,7 +80,7 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
           intervention_seqnum = as.integer(intervention_seqnum)
         )
       
-      # Normalize speaker column name if needed
+      # Handle potential schema mismatches if older version of table is used
       if ("speaker_full_name" %in% names(df_wh) && !"speaker" %in% names(df_wh)) {
         df_wh <- dplyr::rename(df_wh, speaker = speaker_full_name)
       }
@@ -84,22 +94,27 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
 
   # --- 2. Fetch Vintage Data (Datalake) ---
   if (date_from < PIVOT_DATE) {
-    # Vintage data is currently in DEV datalake, moving to PROD eventually
-    # We try env provided, fallback to DEV if needed? 
-    # For now, follow the template logic: check DEV for vintage.
-    # Actually, let's respect the 'env' param but 'vintage' might only be in specific place.
-    # The template says: lake_table <- "a-qc-parliament-debates-vintage"
-    
-    conn_lake <- tube::ellipse_connect("DEV", "datalake") # Assuming vintage is in DEV/datalake
+    conn_lake <- tube::ellipse_connect("DEV", "datalake") 
     
     # Adjust query range
     end_lake <- min(date_to, PIVOT_DATE - 1)
     
     tryCatch({
+      # Optimization: Select specific columns BEFORE collecting
       q_lake <- tube::ellipse_query(conn_lake, "a-qc-parliament-debates-vintage") |>
         dplyr::filter(
           event_date >= as.character(date_from),
           event_date <= as.character(end_lake)
+        ) |>
+        dplyr::select(
+          event_date,
+          intervention_seqnum,
+          speaker = speaker_full_name,
+          text = intervention_text,
+          event_title,
+          subject_of_business_title,
+          subject_of_business_subtitle,
+          intervention_lang
         )
       
       df_lake <- q_lake |> 
@@ -110,11 +125,6 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
           event_date = as.Date(event_date),
           intervention_seqnum = as.integer(intervention_seqnum)
         )
-      
-      # Normalize speaker column
-      if ("speaker_full_name" %in% names(df_lake) && !"speaker" %in% names(df_lake)) {
-        df_lake <- dplyr::rename(df_lake, speaker = speaker_full_name)
-      }
       
       if (nrow(df_lake) > 0) dfs_corpus$lake <- df_lake
       
