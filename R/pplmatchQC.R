@@ -1,108 +1,203 @@
-#' Match Quebec National Assembly Debate Speakers to Member Records
+#' Appariement des intervenants de l'Assemblee nationale du Quebec
 #'
-#' This function performs fuzzy matching between speakers in Quebec National Assembly 
-#' debates and official records of assembly members. It uses the Jaro-Winkler distance
-#' method to match names and filters matches by legislative period.
+#' Fait correspondre les noms des intervenants dans les debats de l'Assemblee
+#' nationale du Quebec avec la table dimensionnelle des deputes. Utilise un
+#' matching multi-niveaux : deterministe (correspondance exacte apres
+#' normalisation) puis fuzzy (similarite via rapidfuzz en Python).
 #'
-#' @param Corpus A data frame containing assembly debates. Must include the
-#' columns: `speaker` (speaker's name) and `event_date` (date of the debate).
-#' @param Names A data frame containing assembly member records. Must include the
-#' columns: `full_name`, `other_names` (optional), `party_id`, `gender`, and
-#' `legislature_id`.
-#' @param max_dist Maximum string distance allowed for a match (default: 0.15).
-#' Lower values are more strict.
+#' @param Corpus Un data frame des debats parlementaires. Doit contenir au
+#'   minimum les colonnes :
+#'   \describe{
+#'     \item{speaker}{Nom de l'intervenant tel qu'il apparait dans les debats
+#'       (ex: "Legault", "M. Berube", "Le President", "Des Voix").}
+#'     \item{event_date}{Date du debat, en format Date ou caractere YYYY-MM-DD.}
+#'   }
+#'   Toutes les autres colonnes sont conservees dans le resultat.
 #'
-#' @return A data frame of the original Corpus with additional columns:
-#' `legislature`, `legislature_id`, `speaker_clean`, `matched_name`, `party_id`,
-#' `gender`, and `name_source`.
+#' @param Names Un data frame de la table des deputes. Colonnes requises :
+#'   \describe{
+#'     \item{full_name}{Nom complet du depute (ex: "Francois Legault").}
+#'     \item{party_id}{Identifiant du parti (ex: "CAQ", "PLQ", "PQ", "QS").}
+#'     \item{gender}{Genre du depute ("m" ou "f").}
+#'     \item{legislature_id}{Numero de la legislature en caractere (ex: "42").}
+#'   }
+#'   Colonnes optionnelles :
+#'   \describe{
+#'     \item{other_names}{Noms alternatifs separes par des points-virgules
+#'       (ex: "Legault; F. Legault"). Utile pour les noms qui different
+#'       entre les debats et la table officielle.}
+#'     \item{district_id}{Identifiant de la circonscription.}
+#'   }
 #'
-#' @import dplyr
-#' @import fuzzyjoin
-#' @import stringr
-#' @importFrom tidyr separate_rows
+#' @param fuzzy_threshold Score minimum (0 a 100) pour accepter un match fuzzy.
+#'   Defaut : 85. Un seuil plus eleve = plus precis mais moins de matchs.
+#'   Un seuil plus bas = plus de matchs mais plus de faux positifs.
+#'
+#' @param legislatures Vecteur d'entiers des numeros de legislatures a traiter.
+#'   Defaut : 35:43 (1994 a aujourd'hui). Les lignes du corpus dont la date
+#'   tombe hors de ces legislatures recoivent un \code{match_level} de
+#'   \code{"unmatched"} et un \code{legislature} de \code{NA}.
+#'
+#' @param verbose Logique. Si \code{TRUE}, affiche la progression et un resume
+#'   des resultats a la fin. Defaut : \code{FALSE}.
+#'
+#' @return Un tibble contenant toutes les colonnes du Corpus original, plus
+#'   les colonnes suivantes :
+#'   \describe{
+#'     \item{legislature}{Numero de la legislature (entier, 35 a 43) determine
+#'       automatiquement a partir de \code{event_date}. \code{NA} si la date
+#'       est hors des legislatures couvertes.}
+#'     \item{speaker_category}{Classification de l'intervenant :
+#'       \code{"person"} (depute), \code{"role"} (fonction institutionnelle
+#'       comme "Le President"), \code{"crowd"} (voix collectives comme
+#'       "Des Voix"), ou \code{"empty"} (champ vide).}
+#'     \item{speaker_normalized}{Version normalisee du nom (minuscules, sans
+#'       accents, sans honorifiques). Vide pour les non-personnes.}
+#'     \item{matched_name}{Nom complet du depute apparie, ou \code{NA} si
+#'       aucun match.}
+#'     \item{party_id}{Parti politique du depute apparie, ou \code{NA}.}
+#'     \item{gender}{Genre du depute apparie, ou \code{NA}.}
+#'     \item{district_id}{Circonscription du depute apparie, ou \code{NA}.}
+#'     \item{match_level}{Niveau de l'appariement :
+#'       \code{"deterministic"} (correspondance exacte),
+#'       \code{"fuzzy"} (similarite au-dessus du seuil),
+#'       \code{"ambiguous"} (plusieurs deputes possibles),
+#'       \code{"unmatched"} (aucune correspondance),
+#'       \code{"role"}, \code{"crowd"}, \code{"empty"}.}
+#'     \item{match_score}{Score de similarite entre 0 et 100. \code{100} pour
+#'       les matchs deterministes, la valeur calculee pour les fuzzy, \code{NA}
+#'       pour les non-matchs.}
+#'   }
+#'
+#' @section Prerequis:
+#' Avant la premiere utilisation, executer \code{\link{ensure_python_deps}()}
+#' pour installer les dependances Python (rapidfuzz).
+#'
+#' @section Pipeline de matching:
+#' \enumerate{
+#'   \item **Preprocessing** : classification de l'intervenant, normalisation
+#'     du nom (retrait des honorifiques, accents, chiffres, districts).
+#'   \item **Niveau 1 (deterministe)** : correspondance exacte sur le nom
+#'     complet normalise, puis sur les noms alternatifs, puis sur le nom
+#'     de famille seul (si non-ambigu dans la legislature).
+#'   \item **Niveau 2 (fuzzy)** : si le niveau 1 echoue, comparaison par
+#'     similarite avec rapidfuzz. Score pondere different pour les noms
+#'     complets vs noms de famille seuls.
+#' }
 #'
 #' @examples
 #' \dontrun{
-#' # Assuming 'debates' and 'MPs' data frames are loaded:
-#' matched_debates <- pplmatchQC(debates, MPs, max_dist = 0.15)
+#' # Premiere utilisation : installer les dependances Python
+#' ensure_python_deps()
 #'
-#' # Check match rate
-#' match_rate <- sum(!is.na(matched_debates$matched_name)) / nrow(matched_debates)
-#' print(paste0("Match rate: ", round(match_rate * 100, 2), "%"))
+#' # Preparer les donnees
+#' corpus <- data.frame(
+#'   speaker = c("Legault", "M. Bérubé", "Le Président", "Des Voix"),
+#'   event_date = as.Date(c("2023-03-15", "2023-03-15", "2023-03-15", "2023-03-15"))
+#' )
+#'
+#' members <- data.frame(
+#'   full_name = c("François Legault", "Pascal Bérubé"),
+#'   party_id = c("CAQ", "PQ"),
+#'   gender = c("m", "m"),
+#'   legislature_id = c("43", "43")
+#' )
+#'
+#' # Lancer l'appariement
+#' result <- pplmatchQC(corpus, members, fuzzy_threshold = 85, verbose = TRUE)
+#'
+#' # Verifier le taux d'appariement (personnes seulement)
+#' persons <- result[result$speaker_category == "person", ]
+#' rate <- sum(persons$match_level %in% c("deterministic", "fuzzy")) / nrow(persons)
+#' message(sprintf("Taux d'appariement : %.1f%%", rate * 100))
+#'
+#' # Explorer les cas non-apparies
+#' unmatched <- result[result$match_level == "unmatched", ]
+#' table(unmatched$speaker)
+#'
+#' # Explorer les cas ambigus
+#' ambiguous <- result[result$match_level == "ambiguous", ]
+#' table(ambiguous$speaker)
 #' }
 #'
+#' @seealso \code{\link{ensure_python_deps}} pour l'installation des dependances,
+#'   \code{\link{data_fetch_qc}} pour recuperer les donnees depuis le datawarehouse,
+#'   \code{\link{generate_gold_sample}} et \code{\link{evaluate_matches_qc}} pour
+#'   l'evaluation de la qualite.
+#'
+#' @import dplyr
+#' @importFrom tibble as_tibble tibble
+#' @importFrom purrr map_chr map_dbl
+#' @importFrom reticulate import_from_path
+#'
 #' @export
-pplmatchQC <- function(Corpus, Names, max_dist = 0.15) {
-  # Create internal legislatures data frame
-  legislatures <- tibble(
-    legislature = 31:43,
-    leg_start_date = as.Date(c(
-      "1976-11-15", "1981-04-13", "1985-12-02", "1989-09-25", "1994-09-12",
-      "1998-11-30", "2003-04-14", "2007-03-26", "2008-12-08", "2012-09-04",
-      "2014-04-07", "2018-10-01", "2022-10-03"
-    )),
-    leg_end_date = as.Date(c(
-      "1981-03-12", "1985-11-20", "1989-08-09", "1994-07-29", "1998-11-25",
-      "2003-03-12", "2007-02-21", "2008-11-05", "2012-08-01", "2014-03-05",
-      "2018-08-23", "2022-08-28", "2026-10-05"
-    ))
-  )
-  
-  # Step 1: Add legislature information to the corpus based on event_date
-  Corpus_with_leg <- Corpus %>%
-    fuzzy_left_join(
-      legislatures,
-      by = c("event_date" = "leg_start_date", "event_date" = "leg_end_date"),
-      match_fun = list(`>=`, `<=`)
-    ) %>%
-    mutate(
-      legislature_id = as.character(legislature),
-      speaker_clean = str_to_lower(str_replace_all(speaker, "[^[:alpha:] ]", ""))
+pplmatchQC <- function(Corpus, Names,
+                       fuzzy_threshold = 85,
+                       legislatures = 35:43,
+                       verbose = FALSE) {
+
+  # Load Python matcher
+  matcher <- .load_matcher()
+
+  # Prepare corpus rows as list of dicts for Python
+  corpus_list <- purrr::map(seq_len(nrow(Corpus)), function(i) {
+    list(
+      speaker = as.character(Corpus$speaker[i]),
+      event_date = as.character(Corpus$event_date[i])
     )
-  
-  # Step 2: Prepare the full_name and other_names
-  Names_full <- Names %>%
-    mutate(
-      name_clean = str_to_lower(str_replace_all(full_name, "[^[:alpha:] ]", "")),
-      name_source = "full_name"
-    ) %>%
-    select(full_name, name_clean, party_id, gender, legislature_id, name_source)
-  
-  Names_other <- Names %>%
-    filter(!is.na(other_names)) %>%
-    tidyr::separate_rows(other_names, sep = ";\\s*") %>%
-    mutate(
-      name_clean = str_to_lower(str_replace_all(other_names, "[^[:alpha:] ]", "")),
-      name_source = "other_names"
-    ) %>%
-    select(full_name, name_clean, party_id, gender, legislature_id, name_source)
-  
-  Names_all <- bind_rows(Names_full, Names_other)
-  
-  # Step 3: Unique speakers with their legislature
-  Speakers <- Corpus_with_leg %>%
-    distinct(speaker, speaker_clean, legislature_id)
-  
-  # Step 4: Join filtered by legislature
-  Speaker_matches <- stringdist_inner_join(
-    Speakers,
-    Names_all,
-    by = c("speaker_clean" = "name_clean", "legislature_id" = "legislature_id"),
-    method = "jw",
-    max_dist = max_dist,
-    distance_col = ".dist"
-  ) %>%
-    rename(
-      legislature_id = legislature_id.x
-    ) %>%
-    group_by(speaker, legislature_id) %>%
-    slice_min(.dist, n = 1, with_ties = FALSE) %>%
-    ungroup() %>%
-    select(speaker, legislature_id, matched_name = full_name, party_id, gender, name_source)
-  
-  # Step 5: Merge with the original corpus
-  Corpus_matched <- Corpus_with_leg %>%
-    left_join(Speaker_matches, by = c("speaker", "legislature_id"))
-  
-  return(Corpus_matched)
+  })
+
+  # Prepare member records as list of dicts for Python
+  # Filter to requested legislatures
+  Names_filtered <- Names[Names$legislature_id %in% as.character(legislatures), ]
+
+  members_list <- purrr::map(seq_len(nrow(Names_filtered)), function(i) {
+    row <- Names_filtered[i, ]
+    m <- list(
+      full_name = as.character(row$full_name),
+      party_id = as.character(row$party_id),
+      gender = as.character(row$gender),
+      legislature_id = as.character(row$legislature_id)
+    )
+    if ("other_names" %in% names(row) && !is.na(row$other_names)) {
+      m$other_names <- as.character(row$other_names)
+    }
+    if ("district_id" %in% names(row) && !is.na(row$district_id)) {
+      m$district_id <- as.character(row$district_id)
+    }
+    m
+  })
+
+  # Get legislatures JSON path
+  leg_path <- file.path(.find_extdata_dir(), "legislatures_qc.json")
+
+  # Call Python matcher
+  results <- matcher$match_corpus(
+    corpus_rows = corpus_list,
+    members = members_list,
+    fuzzy_threshold = as.integer(fuzzy_threshold),
+    legislatures_path = leg_path,
+    verbose = verbose
+  )
+
+  # Convert Python results back to tibble
+  n <- length(results)
+  out <- tibble::tibble(
+    speaker_category = purrr::map_chr(results, ~ .x$speaker_category %||% NA_character_),
+    speaker_normalized = purrr::map_chr(results, ~ .x$speaker_normalized %||% NA_character_),
+    legislature = purrr::map_int(results, ~ as.integer(.x$legislature %||% NA_integer_)),
+    matched_name = purrr::map_chr(results, ~ .x$matched_name %||% NA_character_),
+    party_id = purrr::map_chr(results, ~ .x$party_id %||% NA_character_),
+    gender = purrr::map_chr(results, ~ .x$gender %||% NA_character_),
+    district_id = purrr::map_chr(results, ~ .x$district_id %||% NA_character_),
+    match_level = purrr::map_chr(results, ~ .x$match_level %||% NA_character_),
+    match_score = purrr::map_dbl(results, ~ as.double(.x$match_score %||% NA_real_))
+  )
+
+  # Bind with original corpus
+  result_df <- dplyr::bind_cols(Corpus, out)
+  return(result_df)
 }
+
+#' @keywords internal
+`%||%` <- function(x, y) if (is.null(x)) y else x

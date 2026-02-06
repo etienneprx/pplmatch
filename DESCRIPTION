@@ -1,14 +1,23 @@
 Package: pplmatch
 Title: Match Parliamentary Debate Speakers to Member Records
-Version: 0.1.0
-Authors@R: 
+Version: 0.2.0
+Authors@R:
     person("Your", "Name", email = "your.email@example.com", role = c("aut", "cre"))
-Description: Tools for matching parliamentary debate speakers to official member records using fuzzy matching techniques.
+Description: Tools for matching parliamentary debate speakers to official member records
+    using fuzzy matching techniques. Supports both Canadian Parliament (fuzzyjoin) and
+    Quebec National Assembly (multi-level deterministic + fuzzy via Python/rapidfuzz).
 License: MIT + file LICENSE
 Encoding: UTF-8
-Imports: 
+Imports:
     dplyr,
     stringr,
     fuzzyjoin,
-    tidyr
+    tidyr,
+    reticulate,
+    tibble,
+    purrr,
+    jsonlite
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
 RoxygenNote: 7.3.2
