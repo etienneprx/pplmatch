@@ -194,33 +194,54 @@ pplmatchQC <- function(Corpus, Names,
     match_score = purrr::map_dbl(results, ~ as.double(.x$match_score %||% NA_real_))
   )
 
-  # --- Add Government/Opposition Status ---
+  # --- Add Government/Opposition Status & Minister Inference ---
   elections_file <- file.path(.find_extdata_dir(), "elections_qc.csv")
+  
   if (file.exists(elections_file)) {
     elections <- utils::read.csv(elections_file, stringsAsFactors = FALSE)
     elections$election_date <- as.Date(elections$election_date)
     elections <- elections[order(elections$election_date), ]
     
-    # Vectorized lookup of government party
-    # findInterval returns index of the last election date <= event_date
+    # 1. Determine Government Party for each event
     evt_dates <- as.Date(Corpus$event_date)
     idx <- findInterval(evt_dates, elections$election_date)
     
-    # Handle dates before first election in file (idx 0)
     gov_parties <- rep(NA_character_, n)
     valid_idx <- idx > 0
     gov_parties[valid_idx] <- elections$gov_party_id[idx[valid_idx]]
     
-    # Determine status
+    # 2. Infer Party for Unidentified Ministers
+    # If we didn't match a name, but the speaker title is clearly a Minister,
+    # they belong to the government party.
+    
+    # Regex: Starts with optional Honorific/Article, contains "ministre"
+    minister_regex <- "^(M\\.|Mme|Le|La)?\\s*(le|la)?\\s*(premier|première)?\\s*ministre\\b"
+    
+    is_unmatched <- out$match_level %in% c("unmatched", "role", "empty")
+    is_minister_title <- grepl(minister_regex, Corpus$speaker, ignore.case = TRUE)
+    
+    # Rows to update: Unmatched + Minister Title + Known Government
+    to_infer <- is_unmatched & is_minister_title & !is.na(gov_parties)
+    
+    if (any(to_infer)) {
+      out$party_id[to_infer] <- gov_parties[to_infer]
+      out$match_level[to_infer] <- "role_inferred"
+      out$speaker_category[to_infer] <- "role"
+      # We don't set matched_name because we don't know the person, just the party.
+    }
+    
+    # 3. Determine Role Status (Government vs Opposition)
     out$role_status <- dplyr::case_when(
-      out$speaker_category != "person" ~ NA_character_,
+      # If category is not person OR role_inferred, status is irrelevant/unknown
+      !out$speaker_category %in% c("person", "role") ~ NA_character_,
       is.na(out$party_id) ~ NA_character_,
       is.na(gov_parties) ~ NA_character_,
       out$party_id == gov_parties ~ "Government",
       TRUE ~ "Opposition"
     )
+    
   } else {
-    warning("Elections data not found. 'role_status' will be NA.")
+    warning("Elections data not found. 'role_status' and minister inference will be skipped.")
     out$role_status <- NA_character_
   }
 
