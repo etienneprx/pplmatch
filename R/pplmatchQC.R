@@ -194,6 +194,36 @@ pplmatchQC <- function(Corpus, Names,
     match_score = purrr::map_dbl(results, ~ as.double(.x$match_score %||% NA_real_))
   )
 
+  # --- Add Government/Opposition Status ---
+  elections_file <- file.path(.find_extdata_dir(), "elections_qc.csv")
+  if (file.exists(elections_file)) {
+    elections <- utils::read.csv(elections_file, stringsAsFactors = FALSE)
+    elections$election_date <- as.Date(elections$election_date)
+    elections <- elections[order(elections$election_date), ]
+    
+    # Vectorized lookup of government party
+    # findInterval returns index of the last election date <= event_date
+    evt_dates <- as.Date(Corpus$event_date)
+    idx <- findInterval(evt_dates, elections$election_date)
+    
+    # Handle dates before first election in file (idx 0)
+    gov_parties <- rep(NA_character_, n)
+    valid_idx <- idx > 0
+    gov_parties[valid_idx] <- elections$gov_party_id[idx[valid_idx]]
+    
+    # Determine status
+    out$role_status <- dplyr::case_when(
+      out$speaker_category != "person" ~ NA_character_,
+      is.na(out$party_id) ~ NA_character_,
+      is.na(gov_parties) ~ NA_character_,
+      out$party_id == gov_parties ~ "Government",
+      TRUE ~ "Opposition"
+    )
+  } else {
+    warning("Elections data not found. 'role_status' will be NA.")
+    out$role_status <- NA_character_
+  }
+
   # Bind with original corpus
   result_df <- dplyr::bind_cols(Corpus, out)
   return(result_df)
