@@ -124,6 +124,13 @@ def normalize_speaker(raw_speaker):
 
 def normalize_member_name(name):
     """Normalize a member name from the reference dataset for matching."""
+    # Handle "Lastname, Firstname" format (common in CLESSN data)
+    if "," in name:
+        parts = name.split(",", 1)
+        if len(parts) == 2:
+            # Flip to "Firstname Lastname"
+            name = parts[1].strip() + " " + parts[0].strip()
+
     name = name.lower()
     name = strip_accents(name)
     name = re.sub(r"[^a-z ]", "", name)

@@ -37,7 +37,7 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
   conn_wh <- tube::ellipse_connect(env, "datawarehouse")
 
   # Fetch debates
-  corpus <- tube::ellipse_query(conn_wh, "a-qc-assnat-debates") |>
+  corpus <- tube::ellipse_query(conn_wh, "a-qc-parliament-debates") |>
     dplyr::filter(
       event_date >= date_from,
       event_date <= date_to
@@ -52,9 +52,10 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
 
   # Fetch member records
   conn_dev <- tube::ellipse_connect("DEV", "datawarehouse")
-  members <- tube::ellipse_query(conn_dev, "dim-qc-assnat-members") |>
+  members <- tube::ellipse_query(conn_dev, "dim-qc-parliament-members") |>
     dplyr::collect() |>
-    tibble::as_tibble()
+    tibble::as_tibble() |>
+    dplyr::mutate(legislature_id = stringr::str_extract(legislature_id, "\\d+"))
 
   list(corpus = corpus, members = members)
 }
