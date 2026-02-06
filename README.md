@@ -18,10 +18,10 @@ Assurez-vous d'avoir accès au **VPN du CLESSN** ou d'être sur le réseau de l'
 ### 2. Installer les packages
 ```r
 # Installer le package 'tube' (pour l'accès aux données CLESSN)
-remotes::install_github("clessn/tube")
+remotes::install_github("ellipse-science/tube")
 
 # Installer pplmatch
-remotes::install_github("etienneprx/pplmatch")
+remotes::install_github("ellipse-science/pplmatch")
 ```
 
 ### 3. Configurer Python (Important !)
