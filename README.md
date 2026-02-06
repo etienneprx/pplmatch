@@ -109,13 +109,20 @@ Le data frame des parlementaires doit contenir ces colonnes :
 | `crowd` | Voix collectives | "Des Voix" |
 | `empty` | Champ vide | "", " " |
 
+### Inférence Contextuelle (`contextual`)
+
+Pour les cas ambigus (ex: "M. Lévesque" alors que Mathieu et Sylvain Lévesque sont députés), l'algorithme utilise une approche en deux passes :
+1. **Ancrage** : On identifie tous les députés formellement nommés (ex: "Mathieu Lévesque") lors de la même séance (journée).
+2. **Inférence** : Si un nom ambigu ("M. Lévesque") correspond à plusieurs candidats, mais qu'un seul d'entre eux a été formellement identifié ce jour-là, l'algorithme infère qu'il s'agit de la même personne.
+
 ### Niveaux d'appariement (`match_level`)
 
 | Niveau | Description |
 |---|---|
 | `deterministic` | Correspondance exacte apres normalisation (nom complet, nom alternatif, ou nom de famille non-ambigu) |
 | `fuzzy` | Correspondance par similarite au-dessus du seuil (defaut : 85/100) |
-| `ambiguous` | Plusieurs deputes partagent le meme nom de famille dans la legislature (ex: 3 Proulx en leg. 42) |
+| `contextual` | Ambiguïté résolue par la présence confirmée du député lors de la même séance |
+| `ambiguous` | Plusieurs deputes partagent le meme nom de famille dans la legislature (ex: 3 Proulx en leg. 42). **Note:** Si tous les candidats sont du même parti, `party_id` est retourné par consensus. |
 | `unmatched` | Aucune correspondance trouvee |
 | `role` | L'intervenant est une fonction institutionnelle (pas un depute) |
 | `crowd` | L'intervenant est un groupe ("Des Voix") |
