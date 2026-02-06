@@ -1,4 +1,3 @@
-```
 #' Fetch Quebec National Assembly Debate Data
 #'
 #' Retrieves debate data from the CLESSN infrastructure via the tube package.
@@ -10,19 +9,19 @@
 #'
 #' @return A list with two elements:
 #'   \item{corpus}{Tibble of debate interventions with columns including
-#'     `speaker` and `event_date`.}
+#'     \code{speaker} and \code{event_date}.}
 #'   \item{members}{Tibble of assembly member records with columns including
-#'     `full_name`, `party_id`, `gender`, `legislature_id`.}
+#'     \code{full_name}, \code{party_id}, \code{gender}, \code{legislature_id}.}
 #'
 #' @details
 #' This function seamlessly combines:
 #' \itemize{
-#'   \item Recent debates (2016-09-20+) from the Datawarehouse table `a-qc-parliament-debates`.
-#'   \item Vintage debates (1908-2016) from the Datalake table `a-qc-parliament-debates-vintage`.
+#'   \item Recent debates (2016-09-20+) from the Datawarehouse table \code{a-qc-parliament-debates}.
+#'   \item Vintage debates (1908-2016) from the Datalake table \code{a-qc-parliament-debates-vintage}.
 #'   \item Current member records from the Datawarehouse.
 #'   \item Historical member records from an internal dataset.
 #' }
-#' Requires the `tube` package to be installed and configured.
+#' Requires the \code{tube} package to be installed and configured.
 #'
 #' @examples
 #' \dontrun{
@@ -164,4 +163,3 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
 
   list(corpus = corpus, members = members)
 }
-```
