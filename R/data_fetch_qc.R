@@ -54,22 +54,22 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
     start_wh <- max(date_from, PIVOT_DATE)
     
     tryCatch({
-      # Optimization: Select useful columns, exclude heavy technical metadata
+      # Optimization: Select useful columns, robustly
+      cols_to_fetch <- c(
+        "event_date", "intervention_seqnum", 
+        "speaker_full_name", "speaker", 
+        "intervention_text", "text",
+        "event_title", 
+        "subject_of_business_title", "subject_of_business_subtitle",
+        "intervention_lang"
+      )
+      
       q_wh <- tube::ellipse_query(conn_wh, "a-qc-parliament-debates") |>
         dplyr::filter(
           event_date >= as.character(start_wh),
           event_date <= as.character(date_to)
         ) |>
-        dplyr::select(
-          event_date,
-          intervention_seqnum,
-          speaker = speaker_full_name,
-          text = intervention_text,
-          event_title,
-          subject_of_business_title,
-          subject_of_business_subtitle,
-          intervention_lang
-        )
+        dplyr::select(dplyr::any_of(cols_to_fetch))
       
       df_wh <- q_wh |> 
         dplyr::collect() |> 
@@ -80,9 +80,12 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
           intervention_seqnum = as.integer(intervention_seqnum)
         )
       
-      # Handle potential schema mismatches if older version of table is used
+      # Normalize
       if ("speaker_full_name" %in% names(df_wh) && !"speaker" %in% names(df_wh)) {
         df_wh <- dplyr::rename(df_wh, speaker = speaker_full_name)
+      }
+      if ("intervention_text" %in% names(df_wh) && !"text" %in% names(df_wh)) {
+        df_wh <- dplyr::rename(df_wh, text = intervention_text)
       }
       
       if (nrow(df_wh) > 0) dfs_corpus$wh <- df_wh
@@ -100,22 +103,21 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
     end_lake <- min(date_to, PIVOT_DATE - 1)
     
     tryCatch({
-      # Optimization: Select specific columns BEFORE collecting
+      cols_to_fetch <- c(
+        "event_date", "intervention_seqnum", 
+        "speaker_full_name", "speaker", 
+        "intervention_text", "text",
+        "event_title", 
+        "subject_of_business_title", "subject_of_business_subtitle",
+        "intervention_lang"
+      )
+      
       q_lake <- tube::ellipse_query(conn_lake, "a-qc-parliament-debates-vintage") |>
         dplyr::filter(
           event_date >= as.character(date_from),
           event_date <= as.character(end_lake)
         ) |>
-        dplyr::select(
-          event_date,
-          intervention_seqnum,
-          speaker = speaker_full_name,
-          text = intervention_text,
-          event_title,
-          subject_of_business_title,
-          subject_of_business_subtitle,
-          intervention_lang
-        )
+        dplyr::select(dplyr::any_of(cols_to_fetch))
       
       df_lake <- q_lake |> 
         dplyr::collect() |> 
@@ -125,6 +127,14 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
           event_date = as.Date(event_date),
           intervention_seqnum = as.integer(intervention_seqnum)
         )
+      
+      # Normalize
+      if ("speaker_full_name" %in% names(df_lake) && !"speaker" %in% names(df_lake)) {
+        df_lake <- dplyr::rename(df_lake, speaker = speaker_full_name)
+      }
+      if ("intervention_text" %in% names(df_lake) && !"text" %in% names(df_lake)) {
+        df_lake <- dplyr::rename(df_lake, text = intervention_text)
+      }
       
       if (nrow(df_lake) > 0) dfs_corpus$lake <- df_lake
       
