@@ -50,27 +50,20 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
   # --- 1. Fetch Recent Data (Datawarehouse) ---
   if (date_to >= PIVOT_DATE) {
     conn_wh <- tube::ellipse_connect(env, "datawarehouse")
-    
-    # Adjust query range to not go below pivot if user asks for older
     start_wh <- max(date_from, PIVOT_DATE)
     
     tryCatch({
-      # Optimization: Select useful columns, robustly
-      cols_to_fetch <- c(
-        "event_date", "intervention_seqnum", 
-        "speaker_full_name", "speaker", 
-        "intervention_text", "text",
-        "event_title", 
-        "subject_of_business_title", "subject_of_business_subtitle",
-        "intervention_lang"
-      )
-      
+      # Warehouse uses 'speaker_full_name'
+      cols_wh <- c("event_date", "intervention_seqnum", "speaker_full_name", 
+                   "intervention_text", "event_title", "subject_of_business_title", 
+                   "subject_of_business_subtitle", "intervention_lang")
+                   
       q_wh <- tube::ellipse_query(conn_wh, "a-qc-parliament-debates") |>
         dplyr::filter(
           event_date >= as.character(start_wh),
           event_date <= as.character(date_to)
         ) |>
-        dplyr::select(dplyr::any_of(cols_to_fetch))
+        dplyr::select(dplyr::any_of(cols_wh))
       
       df_wh <- q_wh |> 
         dplyr::collect() |> 
@@ -81,13 +74,9 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
           intervention_seqnum = as.integer(intervention_seqnum)
         )
       
-      # Normalize
-      if ("speaker_full_name" %in% names(df_wh) && !"speaker" %in% names(df_wh)) {
-        df_wh <- dplyr::rename(df_wh, speaker = speaker_full_name)
-      }
-      if ("intervention_text" %in% names(df_wh) && !"text" %in% names(df_wh)) {
-        df_wh <- dplyr::rename(df_wh, text = intervention_text)
-      }
+      # Rename to standard 'speaker' and 'text'
+      if ("speaker_full_name" %in% names(df_wh)) df_wh <- dplyr::rename(df_wh, speaker = speaker_full_name)
+      if ("intervention_text" %in% names(df_wh)) df_wh <- dplyr::rename(df_wh, text = intervention_text)
       
       if (nrow(df_wh) > 0) dfs_corpus$wh <- df_wh
       
@@ -99,26 +88,20 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
   # --- 2. Fetch Vintage Data (Datalake) ---
   if (date_from < PIVOT_DATE) {
     conn_lake <- tube::ellipse_connect("DEV", "datalake") 
-    
-    # Adjust query range
     end_lake <- min(date_to, PIVOT_DATE - 1)
     
     tryCatch({
-      cols_to_fetch <- c(
-        "event_date", "intervention_seqnum", 
-        "speaker_full_name", "speaker", 
-        "intervention_text", "text",
-        "event_title", 
-        "subject_of_business_title", "subject_of_business_subtitle",
-        "intervention_lang"
-      )
-      
+      # Vintage dataset was harmonized at ingestion: 'speaker' is already named 'speaker'
+      cols_lake <- c("event_date", "intervention_seqnum", "speaker", 
+                     "intervention_text", "event_title", "subject_of_business_title", 
+                     "subject_of_business_subtitle", "intervention_lang")
+
       q_lake <- tube::ellipse_query(conn_lake, "a-qc-parliament-debates-vintage") |>
         dplyr::filter(
           event_date >= as.character(date_from),
           event_date <= as.character(end_lake)
         ) |>
-        dplyr::select(dplyr::any_of(cols_to_fetch))
+        dplyr::select(dplyr::any_of(cols_lake))
       
       df_lake <- q_lake |> 
         dplyr::collect() |> 
@@ -128,14 +111,9 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
           event_date = as.Date(event_date),
           intervention_seqnum = as.integer(intervention_seqnum)
         )
-      
-      # Normalize
-      if ("speaker_full_name" %in% names(df_lake) && !"speaker" %in% names(df_lake)) {
-        df_lake <- dplyr::rename(df_lake, speaker = speaker_full_name)
-      }
-      if ("intervention_text" %in% names(df_lake) && !"text" %in% names(df_lake)) {
-        df_lake <- dplyr::rename(df_lake, text = intervention_text)
-      }
+        
+      # 'speaker' is already correct. Just rename text.
+      if ("intervention_text" %in% names(df_lake)) df_lake <- dplyr::rename(df_lake, text = intervention_text)
       
       if (nrow(df_lake) > 0) dfs_corpus$lake <- df_lake
       
