@@ -2,6 +2,7 @@
 
 Level 1: Deterministic (exact match after normalization)
 Level 2: Fuzzy (rapidfuzz with configurable threshold)
+Level 3: Contextual (inference based on session roster)
 """
 
 from rapidfuzz import fuzz
@@ -98,93 +99,6 @@ def _fuzzy_score_last(speaker_norm, candidate_last):
     return 0.5 * s1 + 0.3 * s2 + 0.2 * s3
 
 
-def match_speaker(speaker_norm, lookup, fuzzy_threshold=85):
-    """Match a single normalized speaker name against the lookup.
-
-    Args:
-        speaker_norm: Normalized speaker name (from normalize_speaker).
-        lookup: Lookup dict from _build_lookup.
-        fuzzy_threshold: Minimum fuzzy score (0-100) to accept a match.
-
-    Returns:
-        Dict with: matched_name, party_id, gender, district_id, match_level, match_score.
-        match_level is one of: 'deterministic', 'fuzzy', 'ambiguous', 'unmatched'.
-    """
-    no_match = {
-        "matched_name": None,
-        "party_id": None,
-        "gender": None,
-        "district_id": None,
-        "match_level": "unmatched",
-        "match_score": None,
-    }
-
-    if not speaker_norm:
-        return no_match
-
-    # --- Level 1: Deterministic ---
-
-    # 1a. Exact match on full_name
-    if speaker_norm in lookup["full_name_index"]:
-        info = lookup["full_name_index"][speaker_norm]
-        return _make_result(info, "deterministic", 100.0)
-
-    # 1b. Exact match on other_names
-    if speaker_norm in lookup["other_names_index"]:
-        info = lookup["other_names_index"][speaker_norm]
-        return _make_result(info, "deterministic", 100.0)
-
-    # 1c. Exact match on last name (only if unambiguous)
-    speaker_tokens = speaker_norm.split()
-    if len(speaker_tokens) == 1:
-        last = speaker_tokens[0]
-        if last in lookup["last_name_index"]:
-            candidates = lookup["last_name_index"][last]
-            if len(candidates) == 1:
-                return _make_result(candidates[0], "deterministic", 100.0)
-            else:
-                # Ambiguous: multiple members share this last name
-                # Attempt Consensus Matching
-                return _make_ambiguous_result(candidates, match_score=100.0)
-
-    # --- Level 2: Fuzzy ---
-    best_score = 0.0
-    best_info = None
-    is_single_token = len(speaker_tokens) == 1
-
-    for member in lookup["all_members"]:
-        if is_single_token:
-            # Compare against last names
-            score = _fuzzy_score_last(speaker_norm, member["last_name_norm"])
-        else:
-            # Compare against full names
-            score = _fuzzy_score_full(speaker_norm, member["full_name_norm"])
-
-        if score > best_score:
-            best_score = score
-            best_info = member
-
-    if best_score >= fuzzy_threshold and best_info is not None:
-        # Check ambiguity for single-token fuzzy matches
-        if is_single_token:
-            # Find all members whose last name scores above threshold
-            close_matches = []
-            for member in lookup["all_members"]:
-                s = _fuzzy_score_last(speaker_norm, member["last_name_norm"])
-                if s >= fuzzy_threshold:
-                    close_matches.append(member)
-            
-            # Filter close matches to those with unique full names (avoid dupes)
-            unique_matches = {m["full_name"]: m for m in close_matches}.values()
-            
-            if len(unique_matches) > 1:
-                return _make_ambiguous_result(list(unique_matches), best_score)
-
-        return _make_result(best_info, "fuzzy", best_score)
-
-    return no_match
-
-
 def _make_result(info, match_level, match_score):
     """Build a result dict from member info."""
     return {
@@ -224,85 +138,204 @@ def _make_ambiguous_result(candidates, match_score):
     }
 
 
+def match_speaker_atomic(speaker_norm, lookup, fuzzy_threshold=85):
+    """Core matching logic for a single speaker.
+    
+    Returns:
+        (result_dict, candidates_list)
+        candidates_list is populated ONLY if ambiguity is detected.
+    """
+    no_match = {
+        "matched_name": None,
+        "party_id": None,
+        "gender": None,
+        "district_id": None,
+        "match_level": "unmatched",
+        "match_score": None,
+    }
+
+    if not speaker_norm:
+        return no_match, None
+
+    # --- Level 1: Deterministic ---
+
+    # 1a. Exact match on full_name
+    if speaker_norm in lookup["full_name_index"]:
+        info = lookup["full_name_index"][speaker_norm]
+        return _make_result(info, "deterministic", 100.0), None
+
+    # 1b. Exact match on other_names
+    if speaker_norm in lookup["other_names_index"]:
+        info = lookup["other_names_index"][speaker_norm]
+        return _make_result(info, "deterministic", 100.0), None
+
+    # 1c. Exact match on last name
+    speaker_tokens = speaker_norm.split()
+    if len(speaker_tokens) == 1:
+        last = speaker_tokens[0]
+        if last in lookup["last_name_index"]:
+            candidates = lookup["last_name_index"][last]
+            if len(candidates) == 1:
+                return _make_result(candidates[0], "deterministic", 100.0), None
+            else:
+                # Ambiguous: Return consensus result + candidate list
+                return _make_ambiguous_result(candidates, 100.0), candidates
+
+    # --- Level 2: Fuzzy ---
+    best_score = 0.0
+    best_info = None
+    is_single_token = len(speaker_tokens) == 1
+
+    for member in lookup["all_members"]:
+        if is_single_token:
+            score = _fuzzy_score_last(speaker_norm, member["last_name_norm"])
+        else:
+            score = _fuzzy_score_full(speaker_norm, member["full_name_norm"])
+
+        if score > best_score:
+            best_score = score
+            best_info = member
+
+    if best_score >= fuzzy_threshold and best_info is not None:
+        if is_single_token:
+            # Check ambiguity for single-token fuzzy
+            close_matches = []
+            for member in lookup["all_members"]:
+                s = _fuzzy_score_last(speaker_norm, member["last_name_norm"])
+                if s >= fuzzy_threshold:
+                    close_matches.append(member)
+            
+            # Unique by full_name
+            unique_matches = list({m["full_name"]: m for m in close_matches}.values())
+            
+            if len(unique_matches) > 1:
+                return _make_ambiguous_result(unique_matches, best_score), unique_matches
+
+        return _make_result(best_info, "fuzzy", best_score), None
+
+    return no_match, None
+
+
 def match_corpus(corpus_rows, members, fuzzy_threshold=85,
                  legislatures_path=None, verbose=False):
-    """Match an entire corpus against member records.
+    """Match an entire corpus against member records with contextual disambiguation.
 
-    Args:
-        corpus_rows: List of dicts with keys: speaker, event_date.
-        members: List of dicts with keys: full_name, other_names, party_id,
-                 gender, district_id (optional), legislature_id.
-        fuzzy_threshold: Minimum fuzzy score (0-100).
-        legislatures_path: Path to legislatures_qc.json (or None for bundled).
-        verbose: If True, print progress info.
-
-    Returns:
-        List of dicts, one per input row, with added match columns.
+    Strategy:
+    1. Group corpus by date.
+    2. For each date:
+       a. Perform initial match on all rows.
+       b. Build a "Daily Roster" of members identified with high confidence.
+       c. Re-visit ambiguous matches: if exactly one candidate is in the
+          Daily Roster, infer identity.
     """
     legislatures = load_legislatures(legislatures_path)
-
-    # Cache lookups by legislature
     lookup_cache = {}
+    
+    # Store results grouped by date to perform daily contextual analysis
+    # key: date_str, value: list of (original_index, result_dict, candidate_list_if_ambiguous)
+    grouped_results = {}
 
-    # Cache match results by (speaker_norm, legislature)
-    match_cache = {}
-
-    results = []
     n = len(corpus_rows)
+    if verbose:
+        print(f"  Pre-processing {n} rows...")
 
+    # Phase 1: Initial Match & Grouping
     for i, row in enumerate(corpus_rows):
-        if verbose and (i + 1) % 5000 == 0:
-            print(f"  Matching row {i + 1}/{n}...")
-
         speaker_raw = row.get("speaker", "")
         event_date = row.get("event_date", "")
+        
+        # Ensure event_date is a string
+        date_str = str(event_date) if event_date else "unknown"
 
-        # Determine legislature
         leg = date_to_legislature(event_date, legislatures)
-
-        # Classify and normalize speaker
         category, speaker_norm = normalize_speaker(speaker_raw)
 
         result = dict(row)
         result["speaker_category"] = category
         result["speaker_normalized"] = speaker_norm
         result["legislature"] = leg
+        
+        # Default empty values
+        result["matched_name"] = None
+        result["party_id"] = None
+        result["gender"] = None
+        result["district_id"] = None
+        result["match_level"] = "unmatched"
+        result["match_score"] = None
 
-        if category != "person" or leg is None:
-            result["matched_name"] = None
-            result["party_id"] = None
-            result["gender"] = None
-            result["district_id"] = None
-            result["match_level"] = category if category != "person" else "unmatched"
-            result["match_score"] = None
-            results.append(result)
-            continue
+        candidates = None # Store candidates for ambiguous cases
 
-        # Build or retrieve lookup for this legislature
-        if leg not in lookup_cache:
-            lookup_cache[leg] = _build_lookup(members, leg)
-
-        lookup = lookup_cache[leg]
-
-        # Check match cache
-        cache_key = (speaker_norm, leg)
-        if cache_key in match_cache:
-            match = match_cache[cache_key]
+        if category == "person" and leg is not None:
+            if leg not in lookup_cache:
+                lookup_cache[leg] = _build_lookup(members, leg)
+            
+            lookup = lookup_cache[leg]
+            
+            # Perform atomic match
+            match_res, candidates = match_speaker_atomic(speaker_norm, lookup, fuzzy_threshold)
+            result.update(match_res)
+        
         else:
-            match = match_speaker(speaker_norm, lookup, fuzzy_threshold)
-            match_cache[cache_key] = match
+            result["match_level"] = category if category != "person" else "unmatched"
 
-        result.update(match)
-        results.append(result)
+        if date_str not in grouped_results:
+            grouped_results[date_str] = []
+        grouped_results[date_str].append({
+            "index": i,
+            "result": result,
+            "candidates": candidates # List of dicts or None
+        })
+
+    # Phase 2: Contextual Disambiguation per Date
+    final_results_sorted = [None] * n
+    
+    if verbose:
+        print(f"  Performing contextual analysis on {len(grouped_results)} days...")
+
+    for date_str, items in grouped_results.items():
+        # Step 2a: Build Daily Roster (Set of full_names matched confidently)
+        # We consider 'deterministic' or distinct 'fuzzy' as confident anchor points
+        daily_roster = set()
+        for item in items:
+            res = item["result"]
+            if res["match_level"] in ("deterministic", "fuzzy"):
+                # Add the matched name to roster
+                if res["matched_name"]:
+                    daily_roster.add(res["matched_name"])
+
+        # Step 2b: Resolve Ambiguities
+        for item in items:
+            res = item["result"]
+            candidates = item["candidates"]
+
+            if res["match_level"] == "ambiguous" and candidates:
+                # Check intersection with roster
+                # candidates is a list of member dicts
+                matches_in_roster = [c for c in candidates if c["full_name"] in daily_roster]
+                
+                if len(matches_in_roster) == 1:
+                    # BINGO! We found our person based on context
+                    best = matches_in_roster[0]
+                    res.update({
+                        "matched_name": best["full_name"],
+                        "party_id": best["party_id"],
+                        "gender": best["gender"],
+                        "district_id": best["district_id"],
+                        "match_level": "contextual", # New level!
+                        "match_score": 99.0 # High confidence
+                    })
+                
+                # If still ambiguous, logic falls back to what was set in match_speaker_atomic
+                # (which is the Consensus Logic: shared party/gender)
+
+            # Place in final list
+            final_results_sorted[item["index"]] = res
 
     if verbose:
-        total = len(results)
-        matched = sum(1 for r in results if r["match_level"] in ("deterministic", "fuzzy"))
-        ambiguous = sum(1 for r in results if r["match_level"] == "ambiguous")
-        roles = sum(1 for r in results if r["speaker_category"] == "role")
-        crowds = sum(1 for r in results if r["speaker_category"] == "crowd")
-        unmatched = sum(1 for r in results if r["match_level"] == "unmatched")
-        print(f"  Done. {total} rows: {matched} matched, {ambiguous} ambiguous, "
-              f"{roles} roles, {crowds} crowds, {unmatched} unmatched.")
+        matched = sum(1 for r in final_results_sorted if r["match_level"] in ("deterministic", "fuzzy"))
+        contextual = sum(1 for r in final_results_sorted if r["match_level"] == "contextual")
+        ambiguous = sum(1 for r in final_results_sorted if r["match_level"] == "ambiguous")
+        roles = sum(1 for r in final_results_sorted if r["speaker_category"] == "role")
+        print(f"  Done. Matched: {matched}, Contextual: {contextual}, Ambiguous: {ambiguous}, Roles: {roles}.")
 
-    return results
+    return final_results_sorted
