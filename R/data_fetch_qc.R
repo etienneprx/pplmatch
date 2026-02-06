@@ -16,6 +16,8 @@
 #' @details
 #' This function requires the \code{tube} package (internal CLESSN package)
 #' to be installed. It connects to both the datalake and datawarehouse.
+#' It combines live data from the datawarehouse (current members) with a
+#' historical fallback dataset included in the package.
 #'
 #' @examples
 #' \dontrun{
@@ -50,12 +52,54 @@ data_fetch_qc <- function(date_from, date_to, env = "PROD") {
     corpus <- dplyr::rename(corpus, speaker = speaker_full_name)
   }
 
-  # Fetch member records
+  # 1. Fetch current members from Warehouse (usually only current Leg)
   conn_dev <- tube::ellipse_connect("DEV", "datawarehouse")
-  members <- tube::ellipse_query(conn_dev, "dim-qc-parliament-members") |>
+  members_wh <- tube::ellipse_query(conn_dev, "dim-qc-parliament-members") |>
     dplyr::collect() |>
     tibble::as_tibble() |>
-    dplyr::mutate(legislature_id = stringr::str_extract(legislature_id, "\\d+"))
+    dplyr::mutate(legislature_id = as.character(stringr::str_extract(legislature_id, "\\d+")))
+
+  # 2. Load historical members from package data
+  history_file <- system.file("extdata", "members_historic_qc.csv", package = "pplmatch")
+  if (history_file != "") {
+    members_hist <- utils::read.csv(history_file, stringsAsFactors = FALSE) |>
+      tibble::as_tibble() |>
+      dplyr::mutate(legislature_id = as.character(legislature_id))
+    
+    # Align columns for binding
+    # We prioritize columns present in members_wh, fill missing with NA in hist, and vice-versa
+    common_cols <- intersect(names(members_wh), names(members_hist))
+    
+    # Keep only members from hist that are NOT in wh (based on name + leg_id)
+    # Actually, simplistic approach: Filter hist to keep only Leg < 43
+    # Assuming WH has 43+
+    
+    # Let's find max leg in hist
+    # max_hist_leg <- max(as.integer(members_hist$legislature_id), na.rm=TRUE)
+    
+    # A safer merge strategy: bind rows, distinct.
+    # But schemas might differ slightly. Let's select key columns for matching.
+    
+    # Key columns needed for matcher: 
+    # full_name, party_id, gender, legislature_id, other_names, district_id
+    
+    needed_cols <- c("full_name", "party_id", "gender", "legislature_id", "other_names", "district_id")
+    
+    # Standardize WH
+    m1 <- members_wh |> dplyr::select(dplyr::any_of(needed_cols))
+    
+    # Standardize Hist
+    m2 <- members_hist |> dplyr::select(dplyr::any_of(needed_cols))
+    
+    # Combine
+    members_all <- dplyr::bind_rows(m1, m2) |>
+      dplyr::distinct(full_name, legislature_id, .keep_all = TRUE)
+      
+    members <- members_all
+  } else {
+    warning("Historical members file not found. Results for older legislatures may be incomplete.")
+    members <- members_wh
+  }
 
   list(corpus = corpus, members = members)
 }
