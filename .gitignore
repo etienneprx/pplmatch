@@ -47,3 +47,11 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Gold standard working files
+gold_standard_*.csv
