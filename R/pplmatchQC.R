@@ -5,7 +5,7 @@
 #' matching multi-niveaux : deterministe (correspondance exacte apres
 #' normalisation) puis fuzzy (similarite via rapidfuzz en Python).
 #'
-#' @param Corpus Un data frame des debats parlementaires. Doit contenir au
+#' @param corpus Un data frame des debats parlementaires. Doit contenir au
 #'   minimum les colonnes :
 #'   \describe{
 #'     \item{speaker}{Nom de l'intervenant tel qu'il apparait dans les debats
@@ -14,7 +14,9 @@
 #'   }
 #'   Toutes les autres colonnes sont conservees dans le resultat.
 #'
-#' @param Names Un data frame de la table des deputes. Colonnes requises :
+#' @param members Un data frame de la table des deputes, ou \code{NULL}
+#'   (defaut) pour utiliser automatiquement \code{\link{qc_members}()}.
+#'   Colonnes requises :
 #'   \describe{
 #'     \item{full_name}{Nom complet du depute (ex: "Francois Legault").}
 #'     \item{party_id}{Identifiant du parti (ex: "CAQ", "PLQ", "PQ", "QS").}
@@ -41,7 +43,7 @@
 #' @param verbose Logique. Si \code{TRUE}, affiche la progression et un resume
 #'   des resultats a la fin. Defaut : \code{FALSE}.
 #'
-#' @return Un tibble contenant toutes les colonnes du Corpus original, plus
+#' @return Un tibble contenant toutes les colonnes du corpus original, plus
 #'   les colonnes suivantes :
 #'   \describe{
 #'     \item{legislature}{Numero de la legislature (entier, 35 a 43) determine
@@ -103,8 +105,11 @@
 #'   legislature_id = c("43", "43")
 #' )
 #'
-#' # Lancer l'appariement
-#' result <- pplmatchQC(corpus, members, fuzzy_threshold = 85, verbose = TRUE)
+#' # Lancer l'appariement (utilise qc_members() par defaut)
+#' result <- pplmatchQC(corpus, verbose = TRUE)
+#'
+#' # Ou avec une table de deputes custom
+#' result <- pplmatchQC(corpus, members = members, fuzzy_threshold = 85)
 #'
 #' # Verifier le taux d'appariement (personnes seulement)
 #' persons <- result[result$speaker_category == "person", ]
@@ -121,7 +126,7 @@
 #' }
 #'
 #' @seealso \code{\link{ensure_python_deps}} pour l'installation des dependances,
-#'   \code{\link{data_fetch_qc}} pour recuperer les donnees depuis le datawarehouse,
+#'   \code{\link{qc_members}} pour charger la table des deputes integree,
 #'   \code{\link{generate_gold_sample}} et \code{\link{evaluate_matches_qc}} pour
 #'   l'evaluation de la qualite.
 #'
@@ -131,28 +136,34 @@
 #' @importFrom reticulate import_from_path
 #'
 #' @export
-pplmatchQC <- function(Corpus, Names,
+pplmatchQC <- function(corpus, members = NULL,
                        fuzzy_threshold = 85,
                        legislatures = 35:43,
                        verbose = FALSE) {
+
+  # Load bundled members if not provided
+
+  if (is.null(members)) {
+    members <- qc_members()
+  }
 
   # Load Python matcher
   matcher <- .load_matcher()
 
   # Prepare corpus rows as list of dicts for Python
-  corpus_list <- purrr::map(seq_len(nrow(Corpus)), function(i) {
+  corpus_list <- purrr::map(seq_len(nrow(corpus)), function(i) {
     list(
-      speaker = as.character(Corpus$speaker[i]),
-      event_date = as.character(Corpus$event_date[i])
+      speaker = as.character(corpus$speaker[i]),
+      event_date = as.character(corpus$event_date[i])
     )
   })
 
   # Prepare member records as list of dicts for Python
   # Filter to requested legislatures
-  Names_filtered <- Names[Names$legislature_id %in% as.character(legislatures), ]
+  members_filtered <- members[members$legislature_id %in% as.character(legislatures), ]
 
-  members_list <- purrr::map(seq_len(nrow(Names_filtered)), function(i) {
-    row <- Names_filtered[i, ]
+  members_list <- purrr::map(seq_len(nrow(members_filtered)), function(i) {
+    row <- members_filtered[i, ]
     m <- list(
       full_name = as.character(row$full_name),
       party_id = as.character(row$party_id),
@@ -203,7 +214,7 @@ pplmatchQC <- function(Corpus, Names,
     elections <- elections[order(elections$election_date), ]
     
     # 1. Determine Government Party for each event
-    evt_dates <- as.Date(Corpus$event_date)
+    evt_dates <- as.Date(corpus$event_date)
     idx <- findInterval(evt_dates, elections$election_date)
     
     gov_parties <- rep(NA_character_, n)
@@ -218,7 +229,7 @@ pplmatchQC <- function(Corpus, Names,
     minister_regex <- "^(M\\.|Mme|Le|La)?\\s*(le|la)?\\s*(premier|première)?\\s*ministre\\b"
     
     is_unmatched <- out$match_level %in% c("unmatched", "role", "empty")
-    is_minister_title <- grepl(minister_regex, Corpus$speaker, ignore.case = TRUE)
+    is_minister_title <- grepl(minister_regex, corpus$speaker, ignore.case = TRUE)
     
     # Rows to update: Unmatched + Minister Title + Known Government
     to_infer <- is_unmatched & is_minister_title & !is.na(gov_parties)
@@ -246,7 +257,7 @@ pplmatchQC <- function(Corpus, Names,
   }
 
   # Bind with original corpus
-  result_df <- dplyr::bind_cols(Corpus, out)
+  result_df <- dplyr::bind_cols(corpus, out)
   return(result_df)
 }
 

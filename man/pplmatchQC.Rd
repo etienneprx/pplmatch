@@ -5,15 +5,15 @@
 \title{Appariement des intervenants de l'Assemblee nationale du Quebec}
 \usage{
 pplmatchQC(
-  Corpus,
-  Names,
+  corpus,
+  members = NULL,
   fuzzy_threshold = 85,
   legislatures = 35:43,
   verbose = FALSE
 )
 }
 \arguments{
-\item{Corpus}{Un data frame des debats parlementaires. Doit contenir au
+\item{corpus}{Un data frame des debats parlementaires. Doit contenir au
 minimum les colonnes :
 \describe{
   \item{speaker}{Nom de l'intervenant tel qu'il apparait dans les debats
@@ -22,7 +22,9 @@ minimum les colonnes :
 }
 Toutes les autres colonnes sont conservees dans le resultat.}
 
-\item{Names}{Un data frame de la table des deputes. Colonnes requises :
+\item{members}{Un data frame de la table des deputes, ou \code{NULL}
+(defaut) pour utiliser automatiquement \code{\link{qc_members}()}.
+Colonnes requises :
 \describe{
   \item{full_name}{Nom complet du depute (ex: "Francois Legault").}
   \item{party_id}{Identifiant du parti (ex: "CAQ", "PLQ", "PQ", "QS").}
@@ -50,7 +52,7 @@ tombe hors de ces legislatures recoivent un \code{match_level} de
 des resultats a la fin. Defaut : \code{FALSE}.}
 }
 \value{
-Un tibble contenant toutes les colonnes du Corpus original, plus
+Un tibble contenant toutes les colonnes du corpus original, plus
   les colonnes suivantes :
   \describe{
     \item{legislature}{Numero de la legislature (entier, 35 a 43) determine
@@ -122,8 +124,11 @@ members <- data.frame(
   legislature_id = c("43", "43")
 )
 
-# Lancer l'appariement
-result <- pplmatchQC(corpus, members, fuzzy_threshold = 85, verbose = TRUE)
+# Lancer l'appariement (utilise qc_members() par defaut)
+result <- pplmatchQC(corpus, verbose = TRUE)
+
+# Ou avec une table de deputes custom
+result <- pplmatchQC(corpus, members = members, fuzzy_threshold = 85)
 
 # Verifier le taux d'appariement (personnes seulement)
 persons <- result[result$speaker_category == "person", ]
@@ -142,7 +147,7 @@ table(ambiguous$speaker)
 }
 \seealso{
 \code{\link{ensure_python_deps}} pour l'installation des dependances,
-  \code{\link{data_fetch_qc}} pour recuperer les donnees depuis le datawarehouse,
+  \code{\link{qc_members}} pour charger la table des deputes integree,
   \code{\link{generate_gold_sample}} et \code{\link{evaluate_matches_qc}} pour
   l'evaluation de la qualite.
 }
