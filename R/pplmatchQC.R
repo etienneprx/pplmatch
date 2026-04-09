@@ -40,6 +40,14 @@
 #'   tombe hors de ces legislatures recoivent un \code{match_level} de
 #'   \code{"unmatched"} et un \code{legislature} de \code{NA}.
 #'
+#' @param web_lookup Logique. Si \code{TRUE}, tente de resoudre les cas
+#'   \code{"ambiguous"} restants apres la resolution contextuelle en
+#'   consultant les pages d'interventions des deputes sur le site de
+#'   l'Assemblee nationale (\url{https://www.assnat.qc.ca}). Pour chaque cas
+#'   ambigu, interroge le site pour verifier si exactement un des candidats
+#'   a des interventions enregistrees a cette date. Necessite une connexion
+#'   internet. Defaut : \code{FALSE}.
+#'
 #' @param verbose Logique. Si \code{TRUE}, affiche la progression et un resume
 #'   des resultats a la fin. Defaut : \code{FALSE}.
 #'
@@ -63,6 +71,9 @@
 #'     \item{match_level}{Niveau de l'appariement :
 #'       \code{"deterministic"} (correspondance exacte),
 #'       \code{"fuzzy"} (similarite au-dessus du seuil),
+#'       \code{"contextual"} (resolu par le roster journalier),
+#'       \code{"web_contextual"} (resolu via assnat.qc.ca, uniquement si
+#'         \code{web_lookup = TRUE}),
 #'       \code{"ambiguous"} (plusieurs deputes possibles),
 #'       \code{"unmatched"} (aucune correspondance),
 #'       \code{"role"}, \code{"crowd"}, \code{"empty"}.}
@@ -85,6 +96,13 @@
 #'   \item **Niveau 2 (fuzzy)** : si le niveau 1 echoue, comparaison par
 #'     similarite avec rapidfuzz. Score pondere different pour les noms
 #'     complets vs noms de famille seuls.
+#'   \item **Niveau 3 (contextuel)** : pour les cas ambigus, verifie si
+#'     exactement un des candidats figure dans le roster journalier (c.-a-d.
+#'     a deja ete apparie deterministe ou fuzzy ce jour-la).
+#'   \item **Niveau 4 (web, optionnel)** : si \code{web_lookup = TRUE}, pour
+#'     les cas encore ambigus, consulte les pages d'interventions de
+#'     l'Assemblee nationale pour chaque candidat et verifie si un seul
+#'     a des interventions enregistrees a cette date precise.
 #' }
 #'
 #' @examples
@@ -139,6 +157,7 @@
 pplmatchQC <- function(corpus, members = NULL,
                        fuzzy_threshold = 85,
                        legislatures = 35:43,
+                       web_lookup = FALSE,
                        verbose = FALSE) {
 
   # Load bundled members if not provided
@@ -179,16 +198,19 @@ pplmatchQC <- function(corpus, members = NULL,
     m
   })
 
-  # Get legislatures JSON path
-  leg_path <- file.path(.find_extdata_dir(), "legislatures_qc.json")
+  # Get data file paths
+  leg_path     <- file.path(.find_extdata_dir(), "legislatures_qc.json")
+  session_path <- file.path(.find_extdata_dir(), "sessions_qc.json")
 
   # Call Python matcher
   results <- matcher$match_corpus(
-    corpus_rows = corpus_list,
-    members = members_list,
-    fuzzy_threshold = as.integer(fuzzy_threshold),
+    corpus_rows      = corpus_list,
+    members          = members_list,
+    fuzzy_threshold  = as.integer(fuzzy_threshold),
     legislatures_path = leg_path,
-    verbose = verbose
+    sessions_path    = session_path,
+    web_lookup       = isTRUE(web_lookup),
+    verbose          = verbose
   )
 
   # Convert Python results back to tibble

@@ -190,7 +190,8 @@ def match_speaker_atomic(speaker_norm, lookup, fuzzy_threshold=85, speaker_distr
 
 
 def match_corpus(corpus_rows, members, fuzzy_threshold=85,
-                 legislatures_path=None, verbose=False):
+                 legislatures_path=None, sessions_path=None,
+                 web_lookup=False, verbose=False):
     legislatures = load_legislatures(legislatures_path)
     lookup_cache = {}
     grouped_results = {}
@@ -204,7 +205,7 @@ def match_corpus(corpus_rows, members, fuzzy_threshold=85,
         event_date = row.get("event_date", "")
         date_str = str(event_date) if event_date else "unknown"
         leg = date_to_legislature(event_date, legislatures)
-        
+
         category, speaker_norm, speaker_dist = normalize_speaker(speaker_raw)
 
         result = dict(row)
@@ -225,6 +226,7 @@ def match_corpus(corpus_rows, members, fuzzy_threshold=85,
             grouped_results[date_str] = []
         grouped_results[date_str].append({"index": i, "result": result, "candidates": candidates})
 
+    # --- Level 3: Contextual resolution (daily roster) ---
     final_results_sorted = [None] * n
     for date_str, items in grouped_results.items():
         daily_roster = set(item["result"]["matched_name"] for item in items if item["result"]["match_level"] in ("deterministic", "fuzzy") and item["result"]["matched_name"])
@@ -238,9 +240,31 @@ def match_corpus(corpus_rows, members, fuzzy_threshold=85,
                                 "district_id": best["district_id"], "match_level": "contextual", "match_score": 99.0})
             final_results_sorted[item["index"]] = res
 
+    # --- Level 4: Web-based disambiguation (optional, requires network) ---
+    if web_lookup:
+        from web_lookup import web_disambiguate
+        n_web = 0
+        for item in (i for date_items in grouped_results.values() for i in date_items):
+            res = item["result"]
+            candidates = item["candidates"]
+            if res["match_level"] != "ambiguous" or not candidates:
+                continue
+            event_date = res.get("event_date", "")
+            if not event_date or str(event_date) == "unknown":
+                continue
+            web_result, web_level = web_disambiguate(
+                candidates, str(event_date), sessions_path=sessions_path
+            )
+            if web_level == "web_contextual" and web_result is not None:
+                res.update(web_result)
+                n_web += 1
+        if verbose and n_web:
+            print(f"  Web lookup resolved {n_web} additional ambiguous case(s).")
+
     if verbose:
-        stats = {lvl: sum(1 for r in final_results_sorted if r["match_level"] == lvl) for lvl in 
-                 ["deterministic", "fuzzy", "contextual", "ambiguous", "role", "crowd", "unmatched"]}
-        print(f"  Done. Det: {stats['deterministic']}, Fuzzy: {stats['fuzzy']}, Ctx: {stats['contextual']}, Amb: {stats['ambiguous']}, Roles: {stats['role']}, Unm: {stats['unmatched']}")
+        stats = {lvl: sum(1 for r in final_results_sorted if r["match_level"] == lvl) for lvl in
+                 ["deterministic", "fuzzy", "contextual", "web_contextual", "ambiguous", "role", "crowd", "unmatched"]}
+        print(f"  Done. Det: {stats['deterministic']}, Fuzzy: {stats['fuzzy']}, Ctx: {stats['contextual']}, "
+              f"Web: {stats['web_contextual']}, Amb: {stats['ambiguous']}, Roles: {stats['role']}, Unm: {stats['unmatched']}")
 
     return final_results_sorted
