@@ -96,7 +96,9 @@ ensure_python_deps <- function(envname = "pplmatch") {
 
 #' @keywords internal
 .load_matcher <- function() {
-  reticulate::import_from_path("matcher", path = .find_python_dir())
+  py_dir <- .find_python_dir()
+  reticulate::py_run_string(sprintf("import sys; sys.path.insert(0, '%s')", py_dir))
+  reticulate::import_from_path("matcher", path = py_dir)
 }
 
 #' @keywords internal
