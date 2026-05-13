@@ -199,18 +199,20 @@ pplmatchQC <- function(corpus, members = NULL,
   })
 
   # Get data file paths
-  leg_path     <- file.path(.find_extdata_dir(), "legislatures_qc.json")
-  session_path <- file.path(.find_extdata_dir(), "sessions_qc.json")
+  leg_path            <- file.path(.find_extdata_dir(), "legislatures_qc.json")
+  session_path        <- file.path(.find_extdata_dir(), "sessions_qc.json")
+  party_changes_path  <- file.path(.find_extdata_dir(), "party_changes_qc.csv")
 
   # Call Python matcher
   results <- matcher$match_corpus(
-    corpus_rows      = corpus_list,
-    members          = members_list,
-    fuzzy_threshold  = as.integer(fuzzy_threshold),
-    legislatures_path = leg_path,
-    sessions_path    = session_path,
-    web_lookup       = isTRUE(web_lookup),
-    verbose          = verbose
+    corpus_rows         = corpus_list,
+    members             = members_list,
+    fuzzy_threshold     = as.integer(fuzzy_threshold),
+    legislatures_path   = leg_path,
+    sessions_path       = session_path,
+    party_changes_path  = party_changes_path,
+    web_lookup          = isTRUE(web_lookup),
+    verbose             = verbose
   )
 
   # Convert Python results back to tibble

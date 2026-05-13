@@ -5,6 +5,10 @@ Level 2: Fuzzy (rapidfuzz with configurable threshold)
 Level 3: Contextual (inference based on session roster)
 """
 
+import csv as _csv
+import os as _os
+from datetime import date as _date
+
 from rapidfuzz import fuzz
 from normalizer import (
     normalize_speaker,
@@ -12,6 +16,39 @@ from normalizer import (
     extract_last_name,
 )
 from legislature import load_legislatures, date_to_legislature
+
+
+def _load_party_changes(path):
+    """Load party_changes_qc.csv into {(district_id, legislature_id): [change, ...]}."""
+    if not path or not _os.path.exists(path):
+        return {}
+    changes = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            key = (row["district_id"], str(row["legislature_id"]))
+            changes.setdefault(key, []).append({
+                "party_before": row["party_id_before"],
+                "party_after": row["party_id_after"],
+                "change_date": _date.fromisoformat(row["change_date"]),
+            })
+    return changes
+
+
+def _resolve_party(district_id, legislature, event_date, party_changes):
+    """Return the correct party_id for a member on event_date, or None if not tracked."""
+    key = (district_id, str(legislature))
+    if key not in party_changes:
+        return None
+    if isinstance(event_date, str):
+        try:
+            event_date = _date.fromisoformat(event_date)
+        except (ValueError, TypeError):
+            return None
+    resolved = party_changes[key][0]["party_before"]
+    for ch in sorted(party_changes[key], key=lambda x: x["change_date"]):
+        if event_date >= ch["change_date"]:
+            resolved = ch["party_after"]
+    return resolved
 
 
 def _build_lookup(members, legislature):
@@ -191,8 +228,10 @@ def match_speaker_atomic(speaker_norm, lookup, fuzzy_threshold=85, speaker_distr
 
 def match_corpus(corpus_rows, members, fuzzy_threshold=85,
                  legislatures_path=None, sessions_path=None,
+                 party_changes_path=None,
                  web_lookup=False, verbose=False):
     legislatures = load_legislatures(legislatures_path)
+    party_changes = _load_party_changes(party_changes_path)
     lookup_cache = {}
     grouped_results = {}
     n = len(corpus_rows)
@@ -219,6 +258,10 @@ def match_corpus(corpus_rows, members, fuzzy_threshold=85,
                 lookup_cache[leg] = _build_lookup(members, leg)
             match_res, candidates = match_speaker_atomic(speaker_norm, lookup_cache[leg], fuzzy_threshold, speaker_dist)
             result.update(match_res)
+            if party_changes and result.get("district_id") and leg is not None:
+                resolved = _resolve_party(result["district_id"], leg, event_date, party_changes)
+                if resolved is not None:
+                    result["party_id"] = resolved
         else:
             result["match_level"] = category if category != "person" else "unmatched"
 
@@ -238,6 +281,11 @@ def match_corpus(corpus_rows, members, fuzzy_threshold=85,
                     best = matches_in_roster[0]
                     res.update({"matched_name": best["full_name"], "party_id": best["party_id"], "gender": best["gender"],
                                 "district_id": best["district_id"], "match_level": "contextual", "match_score": 99.0})
+                    if party_changes and res.get("district_id"):
+                        leg = res.get("legislature")
+                        resolved = _resolve_party(res["district_id"], leg, res.get("event_date", ""), party_changes)
+                        if resolved is not None:
+                            res["party_id"] = resolved
             final_results_sorted[item["index"]] = res
 
     # --- Level 4: Web-based disambiguation (optional, requires network) ---
